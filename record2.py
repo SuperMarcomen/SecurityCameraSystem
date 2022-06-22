@@ -5,9 +5,6 @@ import numpy as np
 from telegram.ext import Updater, CommandHandler
 from telegram import Update
 from telegram.ext import CallbackContext
-from concurrent.futures import ThreadPoolExecutor
-
-
 
 video_count = 0
 images = []
@@ -20,8 +17,10 @@ updater = Updater(token='1067685030:AAGuuS7kNXShEwQKaG57g6aLi82M6UluJMQ', use_co
 
 dispatcher = updater.dispatcher
 
+
 def start(update: Update, context: CallbackContext):
     context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a bot, please talk to me!")
+
 
 start_handler = CommandHandler('start', start)
 dispatcher.add_handler(start_handler)
@@ -29,8 +28,6 @@ dispatcher.add_handler(start_handler)
 updater.start_polling()
 
 ###############################################
-
-executor = ThreadPoolExecutor(10)
 
 def motion_detector():
     global motion, video_end, images, video_count
@@ -53,8 +50,15 @@ def motion_detector():
         if video_end > 0:
             video_end -= 1
             images.append(frame)
+
             if video_end == 0:
                 print("Video ended")
+
+                # Create a thread from a function with arguments
+                th = threading.Thread(target=check_faces, args=[images, video_count])
+                # Start the thread
+                th.start()
+
                 motion = False
 
                 height, width, layers = frame.shape
@@ -67,11 +71,6 @@ def motion_detector():
                 cv2.destroyAllWindows()
                 video.release()
                 print("Video saved")
-
-                th = threading.Thread(target=check_faces, args=images.copy())
-                th.start()
-                images = []
-                print("Thread started")
 
                 cap = cv2.VideoCapture(
                     "rtsp://adminmarco:51xMMmEps3I8DdersdTjAMcyGc9Heo@marco23.dynv6.net:36478/stream2")
@@ -126,75 +125,68 @@ def motion_detector():
                     print("Record start 1")
                     motion = True
                     if not high_quality:
-                        cap = cv2.VideoCapture(
-                            "rtsp://adminmarco:51xMMmEps3I8DdersdTjAMcyGc9Heo@marco23.dynv6.net:36478/stream1")
+                        cap = cv2.VideoCapture("rtsp://adminmarco:51xMMmEps3I8DdersdTjAMcyGc9Heo@marco23.dynv6.net:36478/stream1")
                         high_quality = True
                         previous_frame = None
 
             cv2.imshow('VIDEO', thresh_frame)
             cv2.waitKey(1)
 
-def check_faces(images):
-    global video_count
+
+face_names = set()
+
+
+def check_faces(frames, actual_video_count):
+    global face_names
     print("Thread started 2")
     # Load a sample picture and learn how to recognize it.
-    obama_image = face_recognition.load_image_file("Marco.jpg")
-    obama_face_encoding = face_recognition.face_encodings(obama_image)[0]
+    marco_image = face_recognition.load_image_file("Marco.jpg")
+    marco_face_encoding = face_recognition.face_encodings(marco_image)[0]
 
     # Create arrays of known face encodings and their names
     known_face_encodings = [
-        obama_face_encoding
+        marco_face_encoding
     ]
     known_face_names = [
         "Marco",
     ]
 
-    # Initialize some variables
-    # face_locations = []
-    # face_encodings = []
-    # face_names = []
-    process_this_frame = True
-    face_names = set()
-    for frame in images:
+    for frame in frames:
         print("Analyzing image")
         # Only process every other frame of video to save time
-        if process_this_frame:
-            # Resize frame of video to 1/4 size for faster face recognition processing
-            small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+        # Resize frame of video to 1/4 size for faster face recognition processing
+        small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
 
-            # Convert the image from BGR color (which OpenCV uses) to RGB color (which face_recognition uses)
-            rgb_small_frame = small_frame[:, :, ::-1]
+        # Convert the image from BGR color (which OpenCV uses) to RGB color (which face_recognition uses)
+        rgb_small_frame = small_frame[:, :, ::-1]
 
-            # Find all the faces and face encodings in the current frame of video
-            face_locations = face_recognition.face_locations(rgb_small_frame)
-            face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
+        # Find all the faces and face encodings in the current frame of video
+        face_locations = face_recognition.face_locations(rgb_small_frame)
+        face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
 
-            for face_encoding in face_encodings:
-                # See if the face is a match for the known face(s)
-                matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
-                name = "Unknown"
+        for face_encoding in face_encodings:
+            # See if the face is a match for the known face(s)
+            matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
+            name = "Unknown"
 
-                # # If a match was found in known_face_encodings, just use the first one.
-                # if True in matches:
-                #     first_match_index = matches.index(True)
-                #     name = known_face_names[first_match_index]
+            # # If a match was found in known_face_encodings, just use the first one.
+            # if True in matches:
+            #     first_match_index = matches.index(True)
+            #     name = known_face_names[first_match_index]
 
-                # Or instead, use the known face with the smallest distance to the new face
-                face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
-                best_match_index = np.argmin(face_distances)
-                if matches[best_match_index]:
-                    name = known_face_names[best_match_index]
+            # Or instead, use the known face with the smallest distance to the new face
+            face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
+            best_match_index = np.argmin(face_distances)
+            if matches[best_match_index]:
+                name = known_face_names[best_match_index]
 
-                face_names.append(name)
+            face_names.add(name)
 
-                print("Face = ", name)
-                #process_this_frame = not process_this_frame
+            print("Face = ", name)
 
-        updater.bot.send_video(229856560, video=open('videos/video_' + str(video_count) + '.mp4', 'rb'),
-                               supports_streaming=True)
-        message = "Faces: ", ''.join(face_names)
-        updater.bot.send_message(229856560, text=message)
-
+    updater.bot.send_video(229856560, video=open('videos/video_' + str(actual_video_count) + '.mp4', 'rb'), supports_streaming=True)
+    message = "Faces: ", ''.join(face_names)
+    updater.bot.send_message(229856560, text=message)
 
 
 if __name__ == '__main__':
