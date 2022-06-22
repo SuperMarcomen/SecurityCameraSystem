@@ -27,18 +27,18 @@ dispatcher.add_handler(start_handler)
 
 updater.start_polling()
 
+
 ###############################################
 
 def motion_detector():
-    global motion, video_end, images, video_count
-    fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+    global motion, video_end, images, video_count, previous_frame
+
     cap = cv2.VideoCapture("rtsp://adminmarco:51xMMmEps3I8DdersdTjAMcyGc9Heo@marco23.dynv6.net:36478/stream2")
     high_quality = False
 
     cv2.startWindowThread()
 
     frame_count = 0
-    previous_frame = None
 
     while True:
         # 1. Load image; convert to RGB
@@ -63,12 +63,14 @@ def motion_detector():
 
                 height, width, layers = frame.shape
 
+                fourcc = cv2.VideoWriter_fourcc(*'MP4V')
                 video = cv2.VideoWriter("videos/video_" + str(video_count) + ".mp4", fourcc, 15, (width, height))
                 video_count += 1
+
                 for image in images:
                     video.write(image)
 
-                cv2.destroyAllWindows()
+                #cv2.destroyAllWindows()
                 video.release()
                 print("Video saved")
 
@@ -88,49 +90,58 @@ def motion_detector():
         else:
             crop_frame = frame[25:720, 0:1080]
 
-        img_brg = crop_frame
-        img_rgb = cv2.cvtColor(src=img_brg, code=cv2.COLOR_BGR2RGB)
+        if (frame_count % 2) != 0:
+            continue
 
-        if (frame_count % 2) == 0:
-            # 2. Prepare image; grayscale and blur
-            prepared_frame = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2GRAY)
-            prepared_frame = cv2.GaussianBlur(src=prepared_frame, ksize=(5, 5), sigmaX=0)
-
-            # 3. Set previous frame and continue if there is None
-            if previous_frame is None:
-                # First frame; there is no previous one yet
-                print("None, skip")
-                previous_frame = prepared_frame
+        for contour in get_contours(crop_frame):
+            if cv2.contourArea(contour) < 60:
+                # too small: skip!
                 continue
+            video_end = 30 * 5
+            print("Motion")
+            if not motion:
+                print("Record start 1")
+                motion = True
+                if not high_quality:
+                    cap = cv2.VideoCapture(
+                        "rtsp://adminmarco:51xMMmEps3I8DdersdTjAMcyGc9Heo@marco23.dynv6.net:36478/stream1")
+                    high_quality = True
+                    previous_frame = None
 
-            # calculate difference and update previous frame
-            diff_frame = cv2.absdiff(src1=previous_frame, src2=prepared_frame)
-            previous_frame = prepared_frame
 
-            # 4. Dilute the image a bit to make differences more seeable; more suitable for contour detection
-            kernel = np.ones((5, 5))
-            diff_frame = cv2.dilate(diff_frame, kernel, 1)
+previous_frame = None
 
-            # 5. Only take different areas that are different enough (>20 / 255)
-            thresh_frame = cv2.threshold(src=diff_frame, thresh=40, maxval=255, type=cv2.THRESH_BINARY)[1]
 
-            contours, _ = cv2.findContours(image=thresh_frame, mode=cv2.RETR_EXTERNAL, method=cv2.CHAIN_APPROX_SIMPLE)
-            for contour in contours:
-                if cv2.contourArea(contour) < 60:
-                    # too small: skip!
-                    continue
-                video_end = 30 * 5
-                print("Motion")
-                if not motion:
-                    print("Record start 1")
-                    motion = True
-                    if not high_quality:
-                        cap = cv2.VideoCapture("rtsp://adminmarco:51xMMmEps3I8DdersdTjAMcyGc9Heo@marco23.dynv6.net:36478/stream1")
-                        high_quality = True
-                        previous_frame = None
+def get_contours(img_brg):
+    global previous_frame
+    img_rgb = cv2.cvtColor(src=img_brg, code=cv2.COLOR_BGR2RGB)
+    # 2. Prepare image; grayscale and blur
+    prepared_frame = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2GRAY)
+    prepared_frame = cv2.GaussianBlur(src=prepared_frame, ksize=(5, 5), sigmaX=0)
 
-            cv2.imshow('VIDEO', thresh_frame)
-            cv2.waitKey(1)
+    # 3. Set previous frame and continue if there is None
+    if previous_frame is None:
+        # First frame; there is no previous one yet
+        print("None, skip")
+        previous_frame = prepared_frame
+        return []
+
+        # calculate difference and update previous frame
+    diff_frame = cv2.absdiff(src1=previous_frame, src2=prepared_frame)
+    previous_frame = prepared_frame
+
+    # 4. Dilute the image a bit to make differences more seeable; more suitable for contour detection
+    kernel = np.ones((5, 5))
+    diff_frame = cv2.dilate(diff_frame, kernel, 1)
+
+    # 5. Only take different areas that are different enough (>20 / 255)
+    thresh_frame = cv2.threshold(src=diff_frame, thresh=40, maxval=255, type=cv2.THRESH_BINARY)[1]
+
+    contours, _ = cv2.findContours(image=thresh_frame, mode=cv2.RETR_EXTERNAL, method=cv2.CHAIN_APPROX_SIMPLE)
+
+    cv2.imshow('VIDEO', thresh_frame)
+    cv2.waitKey(1)
+    return contours
 
 
 face_names = set()
@@ -184,7 +195,8 @@ def check_faces(frames, actual_video_count):
 
             print("Face = ", name)
 
-    updater.bot.send_video(229856560, video=open('videos/video_' + str(actual_video_count) + '.mp4', 'rb'), supports_streaming=True)
+    updater.bot.send_video(229856560, video=open('videos/video_' + str(actual_video_count) + '.mp4', 'rb'),
+                           supports_streaming=True)
     message = "Faces: ", ''.join(face_names)
     updater.bot.send_message(229856560, text=message)
 
